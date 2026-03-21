@@ -12,6 +12,7 @@ from typing import Dict, Any, List, Optional
 from enum import Enum
 from dataclasses import dataclass, field, asdict
 from ..config import Config
+from ..utils.guardrails import validate_id, assert_path_within_sandbox
 
 
 class ProjectStatus(str, Enum):
@@ -112,7 +113,10 @@ class ProjectManager:
     @classmethod
     def _get_project_dir(cls, project_id: str) -> str:
         """获取项目目录路径"""
-        return os.path.join(cls.PROJECTS_DIR, project_id)
+        validate_id(project_id, "project_id")
+        path = os.path.join(cls.PROJECTS_DIR, project_id)
+        assert_path_within_sandbox(path)
+        return path
     
     @classmethod
     def _get_project_meta_path(cls, project_id: str) -> str:
@@ -230,6 +234,7 @@ class ProjectManager:
             是否删除成功
         """
         project_dir = cls._get_project_dir(project_id)
+        assert_path_within_sandbox(project_dir)
         
         if not os.path.exists(project_dir):
             return False

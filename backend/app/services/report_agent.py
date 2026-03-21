@@ -21,6 +21,7 @@ from enum import Enum
 from ..config import Config
 from ..utils.llm_client import LLMClient
 from ..utils.logger import get_logger
+from ..utils.guardrails import validate_id, assert_path_within_sandbox
 from .zep_tools import (
     ZepToolsService, 
     SearchResult, 
@@ -1909,7 +1910,10 @@ class ReportManager:
     @classmethod
     def _get_report_folder(cls, report_id: str) -> str:
         """获取报告文件夹路径"""
-        return os.path.join(cls.REPORTS_DIR, report_id)
+        validate_id(report_id, "report_id")
+        path = os.path.join(cls.REPORTS_DIR, report_id)
+        assert_path_within_sandbox(path)
+        return path
     
     @classmethod
     def _ensure_report_folder(cls, report_id: str) -> str:

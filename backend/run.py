@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from app import create_app
 from app.config import Config
+from app.utils.guardrails import print_startup_banner
 
 
 def main():
@@ -37,9 +38,11 @@ def main():
     app = create_app()
     
     # 获取运行配置
-    host = os.environ.get('FLASK_HOST', '0.0.0.0')
+    host = os.environ.get('FLASK_HOST', '127.0.0.1')
     port = int(os.environ.get('FLASK_PORT', 5001))
     debug = Config.DEBUG
+    
+    print_startup_banner(host, port)
     
     # 启动服务
     app.run(host=host, port=port, debug=debug, threaded=True)

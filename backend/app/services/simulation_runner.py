@@ -20,6 +20,7 @@ from queue import Queue
 
 from ..config import Config
 from ..utils.logger import get_logger
+from ..utils.guardrails import assert_allowed_script, assert_path_within_sandbox, validate_id
 from .zep_graph_memory_updater import ZepGraphMemoryManager
 from .simulation_ipc import SimulationIPCClient, CommandType, IPCResponse
 
@@ -241,6 +242,7 @@ class SimulationRunner:
     @classmethod
     def _load_run_state(cls, simulation_id: str) -> Optional[SimulationRunState]:
         """从文件加载运行状态"""
+        validate_id(simulation_id, "simulation_id")
         state_file = os.path.join(cls.RUN_STATE_DIR, simulation_id, "run_state.json")
         if not os.path.exists(state_file):
             return None
@@ -297,7 +299,9 @@ class SimulationRunner:
     @classmethod
     def _save_run_state(cls, state: SimulationRunState):
         """保存运行状态到文件"""
+        validate_id(state.simulation_id, "simulation_id")
         sim_dir = os.path.join(cls.RUN_STATE_DIR, state.simulation_id)
+        assert_path_within_sandbox(sim_dir)
         os.makedirs(sim_dir, exist_ok=True)
         state_file = os.path.join(sim_dir, "run_state.json")
         
@@ -396,6 +400,7 @@ class SimulationRunner:
             state.reddit_running = True
         
         script_path = os.path.join(cls.SCRIPTS_DIR, script_name)
+        assert_allowed_script(script_path)
         
         if not os.path.exists(script_path):
             raise ValueError(f"脚本不存在: {script_path}")
@@ -1119,7 +1124,9 @@ class SimulationRunner:
         """
         import shutil
         
+        validate_id(simulation_id, "simulation_id")
         sim_dir = os.path.join(cls.RUN_STATE_DIR, simulation_id)
+        assert_path_within_sandbox(sim_dir)
         
         if not os.path.exists(sim_dir):
             return {"success": True, "message": "模拟目录不存在，无需清理"}

@@ -39,8 +39,9 @@ def create_app(config_class=Config):
         logger.info("MiroFish Backend 启动中...")
         logger.info("=" * 50)
     
-    # 启用CORS
-    CORS(app, resources={r"/api/*": {"origins": "*"}})
+    # 启用CORS - 仅允许本地前端访问
+    cors_origins = os.environ.get('CORS_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000').split(',')
+    CORS(app, resources={r"/api/*": {"origins": cors_origins}})
     
     # 注册模拟进程清理函数（确保服务器关闭时终止所有模拟进程）
     from .services.simulation_runner import SimulationRunner
@@ -67,6 +68,14 @@ def create_app(config_class=Config):
     app.register_blueprint(graph_bp, url_prefix='/api/graph')
     app.register_blueprint(simulation_bp, url_prefix='/api/simulation')
     app.register_blueprint(report_bp, url_prefix='/api/report')
+    
+    # 全局异常处理 - 记录完整堆栈但只返回安全的错误消息
+    @app.errorhandler(Exception)
+    def handle_exception(e):
+        err_logger = get_logger('mirofish.error')
+        err_logger.error(f"Unhandled exception: {e}", exc_info=True)
+        from flask import jsonify
+        return jsonify({"success": False, "error": str(e)}), 500
     
     # 健康检查
     @app.route('/health')
