@@ -16,7 +16,36 @@ from zep_cloud import EpisodeData, EntityEdgeSourceTarget
 from ..config import Config
 from ..models.task import TaskManager, TaskStatus
 from ..utils.zep_paging import fetch_all_nodes, fetch_all_edges
+from ..utils.logger import get_logger
 from .text_processor import TextProcessor
+
+logger = get_logger('mirofish.graph_builder')
+
+# Zep free plan: 5 requests per 60-second window
+_ZEP_RATE_LIMIT_DELAY = 13  # seconds between API calls (safe for 5/min)
+_ZEP_429_MAX_RETRIES = 5
+
+
+def _zep_call_with_rate_limit(fn, *args, **kwargs):
+    """
+    Call a Zep API function with automatic 429 retry.
+    Sleeps for the retry-after duration when rate-limited.
+    """
+    for attempt in range(_ZEP_429_MAX_RETRIES):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:
+            err_str = str(e)
+            if '429' in err_str or 'Rate limit' in err_str:
+                wait = 65  # default wait; Zep says retry-after: 60
+                logger.warning(
+                    f"Zep rate limit hit (attempt {attempt + 1}/{_ZEP_429_MAX_RETRIES}), "
+                    f"waiting {wait}s before retry..."
+                )
+                time.sleep(wait)
+            else:
+                raise
+    raise RuntimeError(f"Zep rate limit: max retries ({_ZEP_429_MAX_RETRIES}) exceeded")
 
 
 @dataclass
@@ -55,8 +84,8 @@ class GraphBuilderService:
         text: str,
         ontology: Dict[str, Any],
         graph_name: str = "MiroFish Graph",
-        chunk_size: int = 500,
-        chunk_overlap: int = 50,
+        chunk_size: int = None,
+        chunk_overlap: int = None,
         batch_size: int = 3
     ) -> str:
         """
@@ -73,6 +102,11 @@ class GraphBuilderService:
         Returns:
             任务ID
         """
+        if chunk_size is None:
+            chunk_size = Config.DEFAULT_CHUNK_SIZE
+        if chunk_overlap is None:
+            chunk_overlap = Config.DEFAULT_CHUNK_OVERLAP
+        
         # 创建任务
         task_id = self.task_manager.create_task(
             task_type="graph_build",
@@ -308,28 +342,28 @@ class GraphBuilderService:
                     progress
                 )
             
-            # 构建episode数据
             episodes = [
                 EpisodeData(data=chunk, type="text")
                 for chunk in batch_chunks
             ]
             
-            # 发送到Zep
             try:
-                batch_result = self.client.graph.add_batch(
+                batch_result = _zep_call_with_rate_limit(
+                    self.client.graph.add_batch,
                     graph_id=graph_id,
                     episodes=episodes
                 )
                 
-                # 收集返回的 episode uuid
                 if batch_result and isinstance(batch_result, list):
                     for ep in batch_result:
                         ep_uuid = getattr(ep, 'uuid_', None) or getattr(ep, 'uuid', None)
                         if ep_uuid:
                             episode_uuids.append(ep_uuid)
                 
-                # 避免请求过快
-                time.sleep(1)
+                # Respect Zep free-plan rate limit (5 req / 60s)
+                if i + batch_size < total_chunks:
+                    logger.info(f"Batch {batch_num}/{total_batches} sent, waiting {_ZEP_RATE_LIMIT_DELAY}s for rate limit...")
+                    time.sleep(_ZEP_RATE_LIMIT_DELAY)
                 
             except Exception as e:
                 if progress_callback:
@@ -342,18 +376,20 @@ class GraphBuilderService:
         self,
         episode_uuids: List[str],
         progress_callback: Optional[Callable] = None,
-        timeout: int = 600
+        timeout: int = 900
     ):
-        """等待所有 episode 处理完成（通过查询每个 episode 的 processed 状态）"""
+        """等待所有 episode 处理完成，rate-limit aware for Zep free plan."""
         if not episode_uuids:
             if progress_callback:
                 progress_callback("无需等待（没有 episode）", 1.0)
             return
         
         start_time = time.time()
-        pending_episodes = set(episode_uuids)
+        pending_episodes = list(episode_uuids)
         completed_count = 0
         total_episodes = len(episode_uuids)
+        checks_per_cycle = 4  # check max 4 episodes per cycle (stay under 5 req/min)
+        cycle_sleep = 65      # then wait 65s for rate limit window to reset
         
         if progress_callback:
             progress_callback(f"开始等待 {total_episodes} 个文本块处理...", 0)
@@ -367,29 +403,38 @@ class GraphBuilderService:
                     )
                 break
             
-            # 检查每个 episode 的处理状态
+            checked = 0
             for ep_uuid in list(pending_episodes):
+                if checked >= checks_per_cycle:
+                    break
                 try:
-                    episode = self.client.graph.episode.get(uuid_=ep_uuid)
+                    episode = _zep_call_with_rate_limit(
+                        self.client.graph.episode.get, uuid_=ep_uuid
+                    )
                     is_processed = getattr(episode, 'processed', False)
                     
                     if is_processed:
                         pending_episodes.remove(ep_uuid)
                         completed_count += 1
-                        
-                except Exception as e:
-                    # 忽略单个查询错误，继续
-                    pass
+                    
+                    checked += 1
+                except Exception:
+                    checked += 1
             
             elapsed = int(time.time() - start_time)
             if progress_callback:
                 progress_callback(
-                    f"Zep处理中... {completed_count}/{total_episodes} 完成, {len(pending_episodes)} 待处理 ({elapsed}秒)",
+                    f"Zep处理中... {completed_count}/{total_episodes} 完成, "
+                    f"{len(pending_episodes)} 待处理 ({elapsed}秒)",
                     completed_count / total_episodes if total_episodes > 0 else 0
                 )
             
             if pending_episodes:
-                time.sleep(3)  # 每3秒检查一次
+                logger.info(
+                    f"Waiting {cycle_sleep}s for rate limit window "
+                    f"({completed_count}/{total_episodes} done)..."
+                )
+                time.sleep(cycle_sleep)
         
         if progress_callback:
             progress_callback(f"处理完成: {completed_count}/{total_episodes}", 1.0)

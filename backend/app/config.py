@@ -41,8 +41,23 @@ class Config:
     ALLOWED_EXTENSIONS = {'pdf', 'md', 'txt', 'markdown'}
     
     # 文本处理配置
-    DEFAULT_CHUNK_SIZE = 500  # 默认切块大小
-    DEFAULT_CHUNK_OVERLAP = 50  # 默认重叠大小
+    DEFAULT_CHUNK_SIZE = int(os.environ.get('CHUNK_SIZE', '2000'))
+    DEFAULT_CHUNK_OVERLAP = int(os.environ.get('CHUNK_OVERLAP', '100'))
+    
+    # Ontology / Entity caps
+    MAX_ENTITY_TYPES = int(os.environ.get('MAX_ENTITY_TYPES', '6'))
+    MAX_EDGE_TYPES = int(os.environ.get('MAX_EDGE_TYPES', '6'))
+    MAX_GRAPH_NODES = int(os.environ.get('MAX_GRAPH_NODES', '50'))
+    
+    # Agent persona generation
+    MAX_AGENT_COUNT = int(os.environ.get('MAX_AGENT_COUNT', '15'))
+    SKIP_ZEP_SEARCH = os.environ.get('SKIP_ZEP_SEARCH', 'true').lower() == 'true'
+    PARALLEL_PROFILE_COUNT = int(os.environ.get('PARALLEL_PROFILE_COUNT', '2'))
+    
+    # Simulation tuning
+    MAX_SIMULATION_HOURS = int(os.environ.get('MAX_SIMULATION_HOURS', '24'))
+    MAX_CONTEXT_LENGTH = int(os.environ.get('MAX_CONTEXT_LENGTH', '8000'))
+    OASIS_SEMAPHORE = int(os.environ.get('OASIS_SEMAPHORE', '5'))
     
     # OASIS模拟配置
     OASIS_DEFAULT_MAX_ROUNDS = int(os.environ.get('OASIS_DEFAULT_MAX_ROUNDS', '10'))

@@ -146,20 +146,27 @@ class FileParser:
 
 def split_text_into_chunks(
     text: str, 
-    chunk_size: int = 500, 
-    overlap: int = 50
+    chunk_size: int = 2000, 
+    overlap: int = 100
 ) -> List[str]:
     """
     将文本分割成小块
     
     Args:
         text: 原始文本
-        chunk_size: 每块的字符数
-        overlap: 重叠字符数
+        chunk_size: 每块的字符数 (must be > 0)
+        overlap: 重叠字符数 (must be >= 0 and < chunk_size)
         
     Returns:
         文本块列表
     """
+    if chunk_size <= 0:
+        chunk_size = 2000
+    if overlap < 0:
+        overlap = 0
+    if overlap >= chunk_size:
+        overlap = chunk_size // 4
+
     if len(text) <= chunk_size:
         return [text] if text.strip() else []
     
@@ -169,10 +176,13 @@ def split_text_into_chunks(
     while start < len(text):
         end = start + chunk_size
         
-        # 尝试在句子边界处分割
         if end < len(text):
-            # 查找最近的句子结束符
-            for sep in ['。', '！', '？', '.\n', '!\n', '?\n', '\n\n', '. ', '! ', '? ']:
+            for sep in [
+                '.\n', '!\n', '?\n', '\n\n',
+                '. ', '! ', '? ', ';\n', '; ',
+                '。', '！', '？', '；',
+                '\n',
+            ]:
                 last_sep = text[start:end].rfind(sep)
                 if last_sep != -1 and last_sep > chunk_size * 0.3:
                     end = start + last_sep + len(sep)
@@ -182,8 +192,10 @@ def split_text_into_chunks(
         if chunk:
             chunks.append(chunk)
         
-        # 下一个块从重叠位置开始
-        start = end - overlap if end < len(text) else len(text)
+        next_start = end - overlap if end < len(text) else len(text)
+        if next_start <= start:
+            next_start = start + max(1, chunk_size // 2)
+        start = next_start
     
     return chunks
 
