@@ -83,7 +83,7 @@ class AgentActivityConfig:
 class TimeSimulationConfig:
     """时间模拟配置（基于中国人作息习惯）"""
     # 模拟总时长（模拟小时数）
-    total_simulation_hours: int = 72  # 默认模拟72小时（3天）
+    total_simulation_hours: int = 0  # set from Config.MAX_SIMULATION_HOURS at runtime
     
     # 每轮代表的时间（模拟分钟）- 默认60分钟（1小时），加快时间流速
     minutes_per_round: int = 60
@@ -209,8 +209,7 @@ class SimulationConfigGenerator:
     3. 生成平台配置
     """
     
-    # 上下文最大字符数
-    MAX_CONTEXT_LENGTH = 50000
+    MAX_CONTEXT_LENGTH = Config.MAX_CONTEXT_LENGTH
     # 每批生成的Agent数量
     AGENTS_PER_BATCH = 15
     
@@ -595,7 +594,7 @@ class SimulationConfigGenerator:
     def _get_default_time_config(self, num_entities: int) -> Dict[str, Any]:
         """获取默认时间配置（中国人作息）"""
         return {
-            "total_simulation_hours": 72,
+            "total_simulation_hours": Config.MAX_SIMULATION_HOURS,
             "minutes_per_round": 60,  # 每轮1小时，加快时间流速
             "agents_per_hour_min": max(1, num_entities // 15),
             "agents_per_hour_max": max(5, num_entities // 5),
@@ -627,7 +626,7 @@ class SimulationConfigGenerator:
             logger.warning(f"agents_per_hour_min >= max，已修正为 {agents_per_hour_min}")
         
         return TimeSimulationConfig(
-            total_simulation_hours=result.get("total_simulation_hours", 72),
+            total_simulation_hours=result.get("total_simulation_hours", Config.MAX_SIMULATION_HOURS),
             minutes_per_round=result.get("minutes_per_round", 60),  # 默认每轮1小时
             agents_per_hour_min=agents_per_hour_min,
             agents_per_hour_max=agents_per_hour_max,
