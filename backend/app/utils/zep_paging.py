@@ -13,13 +13,14 @@ from typing import Any
 from zep_cloud import InternalServerError
 from zep_cloud.client import Zep
 
+from ..config import Config
 from .logger import get_logger
 
 logger = get_logger('mirofish.zep_paging')
 
 _DEFAULT_PAGE_SIZE = 100
-_MAX_NODES = 2000
-_DEFAULT_MAX_RETRIES = 3
+_MAX_NODES = Config.MAX_GRAPH_NODES
+_DEFAULT_MAX_RETRIES = 5
 _DEFAULT_RETRY_DELAY = 2.0  # seconds, doubles each retry
 
 
@@ -31,7 +32,7 @@ def _fetch_page_with_retry(
     page_description: str = "page",
     **kwargs: Any,
 ) -> list[Any]:
-    """单页请求，失败时指数退避重试。仅重试网络/IO类瞬态错误。"""
+    """单页请求，失败时指数退避重试。Handles 429 rate limits and transient errors."""
     if max_retries < 1:
         raise ValueError("max_retries must be >= 1")
 
@@ -51,6 +52,17 @@ def _fetch_page_with_retry(
                 delay *= 2
             else:
                 logger.error(f"Zep {page_description} failed after {max_retries} attempts: {str(e)}")
+        except Exception as e:
+            err_str = str(e)
+            if '429' in err_str or 'Rate limit' in err_str:
+                last_exception = e
+                wait = 65
+                logger.warning(
+                    f"Zep {page_description} rate limited (attempt {attempt + 1}), waiting {wait}s..."
+                )
+                time.sleep(wait)
+            else:
+                raise
 
     assert last_exception is not None
     raise last_exception
@@ -94,6 +106,7 @@ def fetch_all_nodes(
         if len(batch) < page_size:
             break
 
+        time.sleep(13)  # respect Zep free-plan rate limit
         cursor = getattr(batch[-1], "uuid_", None) or getattr(batch[-1], "uuid", None)
         if cursor is None:
             logger.warning(f"Node missing uuid field, stopping pagination at {len(all_nodes)} nodes")
@@ -135,6 +148,7 @@ def fetch_all_edges(
         if len(batch) < page_size:
             break
 
+        time.sleep(13)  # respect Zep free-plan rate limit
         cursor = getattr(batch[-1], "uuid_", None) or getattr(batch[-1], "uuid", None)
         if cursor is None:
             logger.warning(f"Edge missing uuid field, stopping pagination at {len(all_edges)} edges")

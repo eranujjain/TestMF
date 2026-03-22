@@ -245,9 +245,10 @@ class ZepEntityReader:
         # 构建节点UUID到节点数据的映射
         node_map = {n["uuid"]: n for n in all_nodes}
         
-        # 筛选符合条件的实体
+        # 筛选符合条件的实体 (deduplicate by name)
         filtered_entities = []
         entity_types_found = set()
+        seen_names = set()
         
         for node in all_nodes:
             labels = node.get("labels", [])
@@ -267,6 +268,13 @@ class ZepEntityReader:
                 entity_type = matching_labels[0]
             else:
                 entity_type = custom_labels[0]
+            
+            # Skip duplicate entity names
+            node_name = node.get("name", "").strip().lower()
+            if node_name in seen_names:
+                logger.debug(f"跳过重复实体: {node.get('name')}")
+                continue
+            seen_names.add(node_name)
             
             entity_types_found.add(entity_type)
             
@@ -320,7 +328,20 @@ class ZepEntityReader:
             
             filtered_entities.append(entity)
         
-        logger.info(f"筛选完成: 总节点 {total_count}, 符合条件 {len(filtered_entities)}, "
+        # Sort by relationship richness (most connected entities first) and
+        # cap to MAX_GRAPH_NODES so downstream persona generation stays fast.
+        filtered_entities.sort(
+            key=lambda e: len(e.related_edges), reverse=True
+        )
+        max_nodes = Config.MAX_GRAPH_NODES
+        if max_nodes and len(filtered_entities) > max_nodes:
+            logger.info(
+                f"Capping entities from {len(filtered_entities)} to {max_nodes} "
+                f"(MAX_GRAPH_NODES)"
+            )
+            filtered_entities = filtered_entities[:max_nodes]
+        
+        logger.info(f"筛选完成: 总节点 {total_count}, 唯一实体 {len(filtered_entities)}, "
                    f"实体类型: {entity_types_found}")
         
         return FilteredEntities(
