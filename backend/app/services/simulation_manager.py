@@ -237,7 +237,7 @@ class SimulationManager:
         defined_entity_types: Optional[List[str]] = None,
         use_llm_for_profiles: bool = True,
         progress_callback: Optional[callable] = None,
-        parallel_profile_count: int = 3
+        parallel_profile_count: int = None
     ) -> SimulationState:
         """
         准备模拟环境（全程自动化）
@@ -261,6 +261,9 @@ class SimulationManager:
         Returns:
             SimulationState
         """
+        if parallel_profile_count is None:
+            parallel_profile_count = Config.PARALLEL_PROFILE_COUNT
+        
         state = self._load_simulation_state(simulation_id)
         if not state:
             raise ValueError(f"模拟不存在: {simulation_id}")

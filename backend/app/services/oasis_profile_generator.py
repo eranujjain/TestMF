@@ -471,17 +471,17 @@ class OasisProfileGenerator:
             if related_info:
                 context_parts.append("### 关联实体信息\n" + "\n".join(related_info))
         
-        # 4. 使用Zep混合检索获取更丰富的信息
-        zep_results = self._search_zep_for_entity(entity)
-        
-        if zep_results.get("facts"):
-            # 去重：排除已存在的事实
-            new_facts = [f for f in zep_results["facts"] if f not in existing_facts]
-            if new_facts:
-                context_parts.append("### Zep检索到的事实信息\n" + "\n".join(f"- {f}" for f in new_facts[:15]))
-        
-        if zep_results.get("node_summaries"):
-            context_parts.append("### Zep检索到的相关节点\n" + "\n".join(f"- {s}" for s in zep_results["node_summaries"][:10]))
+        # 4. Optionally use Zep hybrid search for richer context
+        if not Config.SKIP_ZEP_SEARCH:
+            zep_results = self._search_zep_for_entity(entity)
+            
+            if zep_results.get("facts"):
+                new_facts = [f for f in zep_results["facts"] if f not in existing_facts]
+                if new_facts:
+                    context_parts.append("### Zep检索到的事实信息\n" + "\n".join(f"- {f}" for f in new_facts[:15]))
+            
+            if zep_results.get("node_summaries"):
+                context_parts.append("### Zep检索到的相关节点\n" + "\n".join(f"- {s}" for s in zep_results["node_summaries"][:10]))
         
         return "\n\n".join(context_parts)
     
@@ -853,32 +853,55 @@ class OasisProfileGenerator:
         use_llm: bool = True,
         progress_callback: Optional[callable] = None,
         graph_id: Optional[str] = None,
-        parallel_count: int = 5,
+        parallel_count: int = None,
         realtime_output_path: Optional[str] = None,
         output_platform: str = "reddit"
     ) -> List[OasisAgentProfile]:
         """
         批量从实体生成Agent Profile（支持并行生成）
-        
+
         Args:
             entities: 实体列表
             use_llm: 是否使用LLM生成详细人设
             progress_callback: 进度回调函数 (current, total, message)
             graph_id: 图谱ID，用于Zep检索获取更丰富上下文
-            parallel_count: 并行生成数量，默认5
+            parallel_count: 并行生成数量
             realtime_output_path: 实时写入的文件路径（如果提供，每生成一个就写入一次）
             output_platform: 输出平台格式 ("reddit" 或 "twitter")
-            
+
         Returns:
             Agent Profile列表
         """
         import concurrent.futures
         from threading import Lock
-        
+
+        if parallel_count is None:
+            parallel_count = Config.PARALLEL_PROFILE_COUNT
+
         # 设置graph_id用于Zep检索
         if graph_id:
             self.graph_id = graph_id
-        
+
+        # --- Dedup by UUID ---
+        seen_uuids = set()
+        deduplicated = []
+        for entity in entities:
+            if entity.uuid and entity.uuid not in seen_uuids:
+                seen_uuids.add(entity.uuid)
+                deduplicated.append(entity)
+            elif not entity.uuid:
+                deduplicated.append(entity)
+        if len(deduplicated) < len(entities):
+            logger.info(f"Removed {len(entities) - len(deduplicated)} duplicate entities")
+        entities = deduplicated
+
+        # --- Cap to MAX_AGENT_COUNT (most-connected first) ---
+        max_agents = Config.MAX_AGENT_COUNT
+        if max_agents and len(entities) > max_agents:
+            entities.sort(key=lambda e: len(e.related_edges or []), reverse=True)
+            logger.info(f"Capping agents from {len(entities)} to {max_agents} (MAX_AGENT_COUNT)")
+            entities = entities[:max_agents]
+
         total = len(entities)
         profiles = [None] * total  # 预分配列表保持顺序
         completed_count = [0]  # 使用列表以便在闭包中修改
@@ -978,13 +1001,13 @@ class OasisProfileGenerator:
                         progress_callback(
                             current, 
                             total, 
-                            f"已完成 {current}/{total}: {entity.name}（{entity_type}）"
+                            f"生成完成 ({current}/{total}): {entity.name}"
                         )
                     
                     if error:
-                        logger.warning(f"[{current}/{total}] {entity.name} 使用备用人设: {error}")
+                        logger.warning(f"[{current}/{total}] #{result_idx} {entity.name} using fallback: {error}")
                     else:
-                        logger.info(f"[{current}/{total}] 成功生成人设: {entity.name} ({entity_type})")
+                        logger.info(f"[{current}/{total}] #{result_idx} generated persona: {entity.name} ({entity_type})")
                         
                 except Exception as e:
                     logger.error(f"处理实体 {entity.name} 时发生异常: {str(e)}")
